@@ -9,7 +9,17 @@ Godot에서 **코어키퍼처럼 고정 시점의 픽셀 2.5D 표현과 콘텐�
 3. Godot 프로젝트 관리자에서 **Import → project.godot → Import & Edit**를 선택합니다.
 4. 최초 이미지·폰트 가져오기가 끝나면 **F6 또는 F5**로 실행합니다. F5가 전체 프로젝트 실행입니다.
 
-검증 엔진은 4.4.1입니다. 새 버전에서는 별도 확인이 필요합니다. 이번 결과물은 Godot 프로젝트이며, 브라우저 공개 배포나 설치형 실행 파일은 포함하지 않습니다.
+검증 엔진은 4.4.1입니다. 새 버전에서는 별도 확인이 필요합니다.
+
+## 웹 배포
+
+GitHub Actions가 `main` 변경 시 테스트 후 Web 빌드를 GitHub Pages에 배포합니다.
+최초 한 번 저장소 Settings → Pages → Source를 **GitHub Actions**로 설정해야 합니다.
+배포 성공 후 주소: https://yonipang.github.io/home/
+
+단일 스레드 WebGL 2 빌드로 추가 서버 헤더 없이 실행합니다. 브라우저에서는 F5 대신 화면의 **저장** 버튼을 사용하세요. 저장은 해당 브라우저에만 남으며 사이트 데이터 삭제·비공개 모드에서는 유지되지 않을 수 있습니다. 아이폰 실기기 검증은 별도입니다.
+
+로컬 웹 내보내기: Godot 4.4.1 Export Templates 설치 후 `godot --headless --export-release Web build/web/index.html` (먼저 `build/web` 폴더 생성). 파일을 직접 열지 말고 HTTP 서버로 실행하세요.
 
 ## 해 볼 일
 
