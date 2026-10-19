@@ -47,5 +47,13 @@ func skip_to_evening() -> void:
 	elapsed = maxf(elapsed, segment_seconds * 2.0)
 
 
+## 다음 구간 시작으로 넘긴다 (저녁에서는 넘기지 않음). 넘겼으면 true
+func skip_to_next_segment() -> bool:
+	if segment() >= SEGMENT_NAMES.size() - 1:
+		return false
+	elapsed = segment_seconds * float(segment() + 1)
+	return true
+
+
 func reset() -> void:
 	elapsed = 0.0

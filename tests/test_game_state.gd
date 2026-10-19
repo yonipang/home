@@ -158,3 +158,28 @@ func cleanup() -> void:
 	for p in [SAVE, SUSPEND]:
 		if FileAccess.file_exists(p):
 			DirAccess.remove_absolute(p)
+
+
+func test_rest_and_wait_until_evening() -> void:
+	var gs := _fresh()
+	var home: Array = gs.interaction("home").options.map(func(o): return o.id)
+	check(home.has("rest"), "can rest at home in the morning")
+	gs.choose("home", "rest")
+	eq(gs.clock.segment_name(), "낮", "resting moves to the next part of the day")
+	gs.world.house_wood = WorldState.HOUSE_WOOD
+	gs.relationships.restore_stage("moru", 1)
+	var opts: Array = gs.npc_options("moru").map(func(o): return o.id)
+	check(opts.has("wait_evening"), "can wait with Moru for the party")
+	var r: Dictionary = gs.choose("moru", "wait_evening")
+	eq(gs.clock.segment_name(), "저녁", "waiting brings the evening")
+	check(r.options.any(func(o): return o.id == "party"), "party offered right away")
+	gs.free()
+
+
+func test_todos_say_when_done() -> void:
+	var gs := _fresh()
+	gs.relationships.restore_stage("moru", 1)
+	for i in WorldState.POSTS:
+		gs.world.lit_posts[i] = true
+	eq(gs.todos(), ["할 일을 다 했다. 집에서 쉬면 시간이 지나간다."], "rest hint when nothing is left")
+	gs.free()

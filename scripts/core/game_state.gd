@@ -159,9 +159,11 @@ func npc_options(npc_id: String) -> Array:
 		"moru":
 			if not w.house_complete() and w.items.wood > 0:
 				opts.append({"id": "give", "label": "나무 조각 건네기 (%d개)" % w.items.wood, "primary": true})
-			if w.house_complete() and not did_today("party"):
-				if clock.segment() >= 2 and relationships.stage(npc_id) >= 1:
+			if w.house_complete() and not did_today("party") and relationships.stage(npc_id) >= 1:
+				if clock.segment() >= 2:
 					opts.append({"id": "party", "label": "잔치하기", "primary": true})
+				else:
+					opts.append({"id": "wait_evening", "label": "저녁까지 같이 기다리기", "primary": true})
 		"gussi":
 			if not did_today("sit"):
 				opts.append({"id": "sit", "label": "옆에 앉아 있기"})
@@ -228,8 +230,9 @@ func interaction(id: String) -> Dictionary:
 		if q != "":
 			line += "\n" + q
 		var npc: Dictionary = Content.NPCS[id]
-		if id == "moru" and w.house_complete() and not did_today("party") and clock.segment() < 2:
-			line += "\n(저녁에 다시 오면 잔치를 할 수 있다.)"
+		if id == "moru" and w.house_complete() and not did_today("party") and clock.segment() < 2 \
+				and relationships.stage(id) < 1:
+			line += "\n(조금 더 친해지면 잔치에 불러 줄 것 같다.)"
 		var speaker: String = npc.name if t.title == "…" else "%s · 나를 '%s'" % [npc.name, t.title]
 		return {"speaker": speaker, "text": line, "hint": t.hint, "options": npc_options(id)}
 	if id.begins_with("wood_") or id.begins_with("mush_"):
@@ -265,8 +268,15 @@ func interaction(id: String) -> Dictionary:
 			var text := "오늘은 이미 수프를 끓였다." if did_today("cook") else ("빛버섯이 %d개 있다." % w.items.mushroom if w.items.mushroom > 0 else "빛버섯이 없다. 서남쪽 버섯숲에 가끔 난다.")
 			return {"speaker": "화덕", "text": text, "options": opts}
 		"home":
-			return {"speaker": "내 집", "text": "창문이 나무 쪽으로 나 있다.",
-				"options": [{"id": "sleep", "label": "일찍 자기", "primary": true}, {"id": "close", "label": "아직 아니야"}]}
+			var opts := []
+			if clock.segment() < 2:
+				var next: String = DayClock.SEGMENT_NAMES[clock.segment() + 1]
+				opts.append({"id": "rest", "label": "쉬기 (%s까지)" % next, "primary": true})
+				opts.append({"id": "sleep", "label": "일찍 자기"})
+			else:
+				opts.append({"id": "sleep", "label": "잠들기", "primary": true})
+			opts.append({"id": "close", "label": "아직 아니야"})
+			return {"speaker": "내 집", "text": "창문이 나무 쪽으로 나 있다. 지금은 %s." % clock.segment_name(), "options": opts}
 		"field":
 			var opts := []
 			var text := ""
@@ -298,6 +308,15 @@ func choose(id: String, option: String) -> Dictionary:
 			return {"action": "close"}
 		"sleep":
 			return {"action": "sleep"}
+		"rest":
+			clock.skip_to_next_segment()
+			return {"speaker": "내 집", "text": "창가에 앉아 나무가 숨 쉬는 걸 보았다. 어느새 %s이 되었다." % clock.segment_name(),
+				"options": [{"id": "close", "label": "나가기"}], "segment_changed": true}
+		"wait_evening":
+			clock.skip_to_evening()
+			log_line("해가 질 때까지 모루와 같이 망치질을 했다.")
+			return {"speaker": name, "text": "해가 질 때까지 모루 옆에서 망치질을 거들었다. 나무 빛이 낮게 가라앉았다.\n「저녁이다! 잔치해요, 잔치!」",
+				"options": npc_options(id), "segment_changed": true}
 		"fish":
 			return {"action": "fish"}
 		"help":
@@ -376,6 +395,8 @@ func todos() -> Array:
 		list.append("연못에서 낚시 (%d번 남음)" % (WorldState.FISH_TRIES - w.fish_tries))
 	if not w.moru_asked and not w.halmeoni_asked and relationships.points("moru") == 0:
 		list.push_front("이웃들에게 인사하기")
+	if list.is_empty():
+		list.append("할 일을 다 했다. 집에서 쉬면 시간이 지나간다.")
 	return list
 
 
