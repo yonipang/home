@@ -21,6 +21,10 @@ const MORU_HOUSE_POS := Vector2(260, 360)
 const HOME_POS := Vector2(-250, -300)
 const MUSHROOM_ANGLE := PI * 0.82  ## 버섯숲은 서남쪽
 
+const LANTERN_SECONDS := 30.0   ## 빛 방울 하나로 빛 밖에서 버티는 시간
+const MALANG_DRAIN := 6.0       ## 말랑이에 닿으면 몇 배 더 빨리 닳는지
+const SEARCH_COST := 4.0        ## 빈집에서 한 곳을 살피는 데 드는 등불
+
 var radius := START_RADIUS
 var items := {"wood": 0, "mushroom": 0, "drop": 0}
 var lit_posts: Array = []
@@ -41,6 +45,11 @@ var fish_total := 0
 
 ## 오늘 생긴 채집물: { id, kind, angle, dist, taken }
 var nodes: Array = []
+
+## 손등불. 빛의 원 안에서는 닳지 않는다.
+var lantern_fuel := 0.0
+## 빈집에서 살핀 곳 (망각해도 남는다 — 이미 본 것은 공책에 적혀 있으니까)
+var searched: Array = []
 
 
 func _init() -> void:
@@ -76,6 +85,7 @@ func end_night(forgot: bool) -> Dictionary:
 	radius = maxf(MIN_RADIUS, radius)
 	for i in POSTS:
 		lit_posts[i] = false
+	lantern_fuel = 0.0
 	var wilted := false
 	if halmeoni_asked and not pumpkin_watered_today and pumpkin_water > 0 and not pumpkin_ready():
 		pumpkin_water -= 1
@@ -115,6 +125,50 @@ func light_post(i: int) -> bool:
 		return false
 	items.drop -= 1
 	lit_posts[i] = true
+	return true
+
+
+# ── 손등불과 빈집 ─────────────────────────────────
+
+func light_lantern() -> bool:
+	if items.drop <= 0:
+		return false
+	items.drop -= 1
+	lantern_fuel = LANTERN_SECONDS
+	return true
+
+
+func lantern_on() -> bool:
+	return lantern_fuel > 0.0
+
+
+func lantern_ratio() -> float:
+	return clampf(lantern_fuel / LANTERN_SECONDS, 0.0, 1.0)
+
+
+## 빛 밖에서 등불이 닳는다. "ok" | "switched"(빛 방울을 갈아 끼움) | "out"(꺼짐)
+func burn_lantern(delta: float, outside: bool, drained: bool) -> String:
+	if not outside:
+		return "ok"
+	if lantern_fuel <= 0.0:
+		return "out"
+	lantern_fuel -= delta * (1.0 + (MALANG_DRAIN if drained else 0.0))
+	if lantern_fuel > 0.0:
+		return "ok"
+	if items.drop > 0:
+		items.drop -= 1
+		lantern_fuel = LANTERN_SECONDS
+		return "switched"
+	lantern_fuel = 0.0
+	return "out"
+
+
+## 빈집의 한 곳을 살핀다. 처음 살피면 true
+func search(spot_id: String) -> bool:
+	if searched.has(spot_id):
+		return false
+	searched.append(spot_id)
+	lantern_fuel = maxf(1.0, lantern_fuel - SEARCH_COST) if lantern_fuel > 0.0 else 0.0
 	return true
 
 
@@ -197,7 +251,7 @@ func record_fish(success: bool) -> bool:
 
 const _FIELDS := ["radius", "items", "lit_posts", "drops_taken", "moru_asked", "house_wood", "halmeoni_asked",
 	"pumpkin_water", "pumpkin_watered_today", "pumpkins_harvested", "rod_borrowed", "fish_tries",
-	"fish_caught_this_cycle", "fish_total", "nodes"]
+	"fish_caught_this_cycle", "fish_total", "nodes", "lantern_fuel", "searched"]
 
 
 func to_dict() -> Dictionary:

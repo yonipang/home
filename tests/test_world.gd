@@ -85,3 +85,30 @@ func test_world_round_trip() -> void:
 	eq(w2.items.wood, 1, "items")
 	check(w2.lit_posts[2], "posts")
 	check(w2.find_node("wood_1").taken, "taken nodes")
+
+
+func test_lantern_burns_only_outside_and_switches() -> void:
+	var w := WorldState.new()
+	w.items.drop = 2
+	check(w.light_lantern(), "light the lantern")
+	eq(w.burn_lantern(100.0, false, false), "ok", "no burn inside the light")
+	eq(w.lantern_fuel, WorldState.LANTERN_SECONDS, "full")
+	eq(w.burn_lantern(WorldState.LANTERN_SECONDS + 1.0, true, false), "switched", "swaps in the next drop")
+	eq(w.items.drop, 0, "drop used")
+	eq(w.burn_lantern(WorldState.LANTERN_SECONDS + 1.0, true, false), "out", "goes out with no drops")
+
+
+func test_malang_drains_faster() -> void:
+	var w := WorldState.new()
+	w.items.drop = 1
+	w.light_lantern()
+	w.burn_lantern(1.0, true, true)
+	eq(w.lantern_fuel, WorldState.LANTERN_SECONDS - 1.0 - WorldState.MALANG_DRAIN, "drained by the malang")
+
+
+func test_lantern_goes_out_at_night() -> void:
+	var w := WorldState.new()
+	w.items.drop = 1
+	w.light_lantern()
+	w.end_night(false)
+	check(not w.lantern_on(), "lantern out overnight")

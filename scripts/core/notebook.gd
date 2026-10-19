@@ -8,6 +8,8 @@ var entries: Array = []
 var people: Dictionary = {}
 ## 알아낸 규칙 id 목록
 var rules: Array = []
+## 빈집에서 찾은 단서 id 목록
+var clues: Array = []
 
 
 func add(cycle: int, day: int, text: String, kind := "auto") -> void:
@@ -43,8 +45,15 @@ func knows(id: String) -> bool:
 	return rules.has(id)
 
 
+func add_clue(id: String) -> bool:
+	if clues.has(id):
+		return false
+	clues.append(id)
+	return true
+
+
 func to_dict() -> Dictionary:
-	return {"entries": entries.duplicate(true), "people": people.duplicate(), "rules": rules.duplicate()}
+	return {"entries": entries.duplicate(true), "people": people.duplicate(), "rules": rules.duplicate(), "clues": clues.duplicate()}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -56,3 +65,4 @@ func from_dict(d: Dictionary) -> void:
 	for k in p:
 		people[k] = int(p[k])
 	rules = Array(d.get("rules", []))
+	clues = Array(d.get("clues", []))

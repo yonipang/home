@@ -4,7 +4,8 @@ extends Node
 ## 개발용 실행 인자 (godot ... -- <인자>):
 ##   --smoke                  며칠을 자동으로 돌려 보고 종료 (CI)
 ##   --shot=<장면> --out=<png>  스크린샷 저장 후 종료.
-##                            장면: village, dialogue, notebook, fishing, sleep, morning, forgot
+##                            장면: village, dialogue, notebook, fishing, sleep, morning, forgot,
+##                                  explore, house, clues
 
 const Village := preload("res://scripts/village/village.gd")
 const Joystick := preload("res://scripts/ui/floating_joystick.gd")
@@ -27,6 +28,8 @@ var toast: Label
 
 var time_scale := 1.0
 var _talking_to := ""
+var _was_outside := false
+var _low_warned := false
 var _args := {}
 var _toast_tween: Tween
 
@@ -60,8 +63,8 @@ func _build() -> void:
 	village = Village.new()
 	add_child(village)
 	village.arrived.connect(_interact)
-	village.blocked_by_border.connect(func(): _toast("털뭉치: 「아직 안 돼. 아무것도 없이 들어가면 길 잃어.」"))
-	village.blocked_by_dark.connect(func(): _toast("어둠 속이라 갈 수 없다. 빛의 원이 줄어든 탓이다."))
+	village.blocked_by_border.connect(func(): _toast("털뭉치: 「아무것도 없이 들어가면 길 잃어. 나무 뿌리에서 손등불 켜고 가.」"))
+	village.blocked_by_dark.connect(func(): _toast("어둠 속이다. 손등불이 있어야 갈 수 있다. (나무 뿌리에서)"))
 
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = true
@@ -95,6 +98,9 @@ func _build() -> void:
 	toast.offset_left = 40
 	toast.offset_right = -40
 	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	toast.add_theme_constant_override("outline_size", 10)
+	toast.add_theme_color_override("font_outline_color", Color(0.05, 0.04, 0.03, 0.9))
 	toast.modulate.a = 0.0
 	toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui.add_child(toast)
@@ -131,6 +137,7 @@ func _process(delta: float) -> void:
 		var keys := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 		village.move_input = joystick.vector if joystick.vector.length() > 0.05 else keys
 		village.step(delta)
+		_update_lantern(delta)
 		var seg: int = GameState.clock.advance(delta * time_scale)
 		if seg >= 0:
 			_toast(DayClock.SEGMENT_NAMES[seg] + (" · 털뭉치: 「저녁이다. 너무 들뜨지 마.」" if seg == 2 else ""))
@@ -140,6 +147,37 @@ func _process(delta: float) -> void:
 	var view_h := get_viewport().get_visible_rect().size.y
 	camera.position = village.player_pos + Vector2(0, view_h * 0.14)
 	GameState.player_position = village.player_pos
+
+
+func _update_lantern(delta: float) -> void:
+	var w: WorldState = GameState.world
+	var out: bool = village.outside()
+	if out and not _was_outside:
+		_toast("털뭉치는 경계에서 멈춰 섰다. 「…빨리 와.」")
+		_low_warned = false
+	_was_outside = out
+	var r := w.burn_lantern(delta, out, village.malang_touch)
+	if village.malang_touch and out:
+		Input.vibrate_handheld(30)
+	if r == "switched":
+		_toast("등불이 다 닳아 빛 방울을 갈아 끼웠다. (남은 빛 방울 %d)" % w.items.drop)
+		_low_warned = false
+	elif r == "out":
+		_faint()
+	elif out and w.lantern_ratio() < 0.3 and w.items.drop == 0 and not _low_warned:
+		_low_warned = true
+		_toast("등불이 깜박인다. 돌아가야 해.")
+
+
+func _faint() -> void:
+	var text: String = GameState.faint()
+	village.player_pos = Vector2(0, 150)
+	village.furball_pos = Vector2(-40, 170)
+	village.cancel_walk()
+	camera.reset_smoothing()
+	_was_outside = false
+	_talking_to = "furball"
+	dialogue.open("", text, [{"id": "close", "label": "…고마워, 털뭉치"}])
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -322,8 +360,54 @@ func _run_smoke() -> void:
 	_check(GameState.world.house_complete(), "the house stays after forgetting")
 	_interact("moru")
 	_check(dialogue.visible, "talk after forgetting")
+	dialogue.hide()
+	await _smoke_explore()
 	print("SMOKE FAIL" if _smoke_failed else "SMOKE OK")
 	get_tree().quit(1 if _smoke_failed else 0)
+
+
+## 손등불을 켜고 빛 밖 빈집을 살핀 뒤, 단서를 잇고, 기절까지 해 본다
+func _smoke_explore() -> void:
+	var gs := GameState
+	var w: WorldState = gs.world
+	w.items.drop = 3
+	_interact("tree")
+	_on_dialogue_choice("lantern")
+	_on_dialogue_choice("close")
+	_check(w.lantern_on(), "lantern lit at the tree")
+	for hid in Content.HOUSES:
+		village.player_pos = Content.HOUSES[hid].pos + Vector2(0, 90)
+		for i in 10:
+			await get_tree().process_frame
+		_check(village.outside(), "standing outside the light at " + hid)
+		var guard := 0
+		_interact(hid)
+		while dialogue.visible and guard < 10:
+			var opts: Array = gs._house_spots(hid)
+			if opts.is_empty():
+				break
+			_on_dialogue_choice(opts[0].id)
+			guard += 1
+		dialogue.hide()
+	_check(gs.notebook.clues.size() == Content.CLUES.size(), "found every clue (%d)" % gs.notebook.clues.size())
+	for link in Content.LINKS:
+		_check(gs.link_clues(link.clues).ok, "links " + link.rule)
+	notebook.open()
+	notebook._tab = 2
+	notebook.refresh()
+	await get_tree().process_frame
+	notebook.hide()
+	# 빛 방울 없이 등불이 꺼지면 기절
+	w.items.drop = 0
+	w.lantern_fuel = 0.5
+	village.player_pos = Content.HOUSES.house_east.pos
+	var light_before: float = gs.furball_light
+	for i in 60:
+		_process(1.0 / 30.0)
+		if dialogue.visible:
+			break
+	_check(dialogue.visible and gs.furball_light < light_before, "fainting brings me back and dims the furball")
+	_check(not village.outside(), "back under the tree after fainting")
 
 
 func _take_shot(scene: String, out: String) -> void:
@@ -352,6 +436,32 @@ func _take_shot(scene: String, out: String) -> void:
 				gs.world.rod_borrowed = true
 				fishing.start()
 				fishing._t = fishing._bite_at + 0.1
+		"explore":
+			gs.world.items.drop = 2
+			gs.world.light_lantern()
+			gs.world.lantern_fuel = WorldState.LANTERN_SECONDS * 0.45
+			village.player_pos = Content.HOUSES.house_east.pos + Vector2(-150, 60)
+			for m in village.malangs:
+				if m.home.distance_to(Content.HOUSES.house_east.pos) < 400.0:
+					m.pos = village.player_pos + Vector2(140, 110)
+					break
+		"house":
+			gs.world.items.drop = 1
+			gs.world.light_lantern()
+			village.player_pos = Content.HOUSES.house_east.pos + Vector2(0, 90)
+			gs.choose("house_east", "e_tally")
+			gs.choose("house_east", "e_pencil")
+			_talking_to = "house_east"
+			_show(gs.choose("house_east", "e_box"))
+		"clues":
+			for hid in ["house_east", "house_west"]:
+				for sp in Content.HOUSES[hid].spots:
+					gs.choose(hid, sp.id)
+			gs.link_clues(["e_tally", "e_pencil", "e_box"])
+			notebook.open()
+			notebook._tab = 2
+			notebook._picked = ["w_paper", "w_chair"]
+			notebook.refresh()
 		"sleep":
 			gs.notebook.learn_rule("forget")
 			gs.gain("party")

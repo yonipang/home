@@ -183,3 +183,52 @@ func test_todos_say_when_done() -> void:
 		gs.world.lit_posts[i] = true
 	eq(gs.todos(), ["할 일을 다 했다. 집에서 쉬면 시간이 지나간다."], "rest hint when nothing is left")
 	gs.free()
+
+
+func test_explore_house_and_link_clues() -> void:
+	var gs := _fresh()
+	var spots: Array = gs.interaction("house_east").options.map(func(o): return o.id)
+	check(not spots.has("e_box"), "the box needs other clues first")
+	gs.choose("house_east", "e_tally")
+	gs.choose("house_east", "e_pencil")
+	spots = gs.interaction("house_east").options.map(func(o): return o.id)
+	check(spots.has("e_box"), "the box appears after finding the tally and pencil")
+	gs.choose("house_east", "e_box")
+	eq(gs.notebook.clues.size(), 3, "three clues")
+	eq(gs.linkable_count(), 1, "one link possible")
+	check(not gs.link_clues(["e_tally", "e_box"]).ok, "wrong set does not link")
+	var r: Dictionary = gs.link_clues(["e_box", "e_pencil", "e_tally"])
+	check(r.ok, "right set links")
+	check(gs.notebook.knows("selves"), "learns that this is not the first time")
+	gs.end_day("sleep")
+	check(gs.notebook.clues.has("e_box"), "clues survive the night")
+	gs.free()
+
+
+func test_clues_do_not_make_happy() -> void:
+	var gs := _fresh()
+	for id in Content.HOUSES:
+		for sp in Content.HOUSES[id].spots:
+			gs.choose(id, sp.id)
+	eq(gs.notebook.clues.size(), Content.CLUES.size(), "all clues found")
+	eq(gs.happiness.value, 0.0, "discovering the past is not a happy thing")
+	gs.free()
+
+
+func test_faint_costs_furball_and_time() -> void:
+	var gs := _fresh()
+	var light: float = gs.furball_light
+	gs.faint()
+	eq(gs.clock.segment_name(), "낮", "lose the rest of the morning")
+	check(gs.furball_light < light, "the furball gets dimmer")
+	gs.free()
+
+
+func test_lantern_from_tree() -> void:
+	var gs := _fresh()
+	gs.choose("tree", "drop")
+	var opts: Array = gs.interaction("tree").options.map(func(o): return o.id)
+	check(opts.has("lantern"), "can light a lantern with a drop")
+	gs.choose("tree", "lantern")
+	check(gs.world.lantern_on(), "lantern lit")
+	gs.free()

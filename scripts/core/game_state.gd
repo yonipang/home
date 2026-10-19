@@ -205,6 +205,8 @@ func pet_furball() -> String:
 	gain("furball")
 	if furball_light < 70.0:
 		return Content.FURBALL_TIRED_LINE
+	if not notebook.clues.is_empty() and not notebook.knows("selves"):
+		return ["그 집 얘기는… 나중에.", "거기 먼지밖에 없어.", "…밥이나 먹자."][happiness.times_done("furball") % 3]
 	return Content.FURBALL_LINES[(day + happiness.times_done("furball")) % Content.FURBALL_LINES.size()]
 
 
@@ -242,6 +244,8 @@ func interaction(id: String) -> Dictionary:
 		if kind == "mushroom":
 			return {"toast": "빛버섯을 땄다. (주머니 %d개)" % w.items.mushroom}
 		return {}
+	if Content.HOUSES.has(id):
+		return _house_view(id, Content.HOUSES[id].intro)
 	if id.begins_with("post_"):
 		var i := int(id.trim_prefix("post_"))
 		if w.lit_posts[i]:
@@ -258,8 +262,11 @@ func interaction(id: String) -> Dictionary:
 			var opts := []
 			if left > 0:
 				opts.append({"id": "drop", "label": "빛 방울 받기 (오늘 %d번 남음)" % left, "primary": true})
+			if w.items.drop > 0 and not w.lantern_on():
+				opts.append({"id": "lantern", "label": "손등불 켜기 (빛 방울 1개)"})
 			opts.append({"id": "close", "label": "그만두기"})
-			return {"speaker": "등불나무", "text": "뿌리 끝에 빛 방울이 이슬처럼 맺혀 있다.\n주머니의 빛 방울 %d개 · 꺼진 경계 등불 %d개\n꺼진 등불이 많을수록 밤사이 빛의 원이 줄어든다." % [w.items.drop, w.lit_posts.count(false)], "options": opts}
+			var lamp := "손등불이 켜져 있다." if w.lantern_on() else "손등불이 있으면 빛 밖으로 나갈 수 있다."
+			return {"speaker": "등불나무", "text": "뿌리 끝에 빛 방울이 이슬처럼 맺혀 있다.\n주머니의 빛 방울 %d개 · 꺼진 경계 등불 %d개\n꺼진 등불이 많을수록 밤사이 빛의 원이 줄어든다. %s" % [w.items.drop, w.lit_posts.count(false), lamp], "options": opts}
 		"hearth":
 			var opts := []
 			if not did_today("cook") and w.items.mushroom > 0:
@@ -303,9 +310,16 @@ func choose(id: String, option: String) -> Dictionary:
 	var w := world
 	var name: String = Content.NPCS[id].name if NPC_IDS.has(id) else Content.SPOT_NAMES.get(id, "")
 	var ok := [{"id": "close", "label": "좋았다"}]
+	if Content.HOUSES.has(id) and option != "close":
+		return _search_spot(id, option)
 	match option:
 		"close":
 			return {"action": "close"}
+		"lantern":
+			w.light_lantern()
+			log_line("손등불을 켰다. 털뭉치가 「아무것도 없이 들어가면 길 잃어. 빨리 와.」라고 했다.")
+			return {"speaker": "등불나무", "text": "빛 방울 하나를 병에 담아 손등불을 켰다. 이제 빛 밖으로 나갈 수 있다.\n빛 밖에서는 등불이 닳는다. 다 닳으면 주머니의 빛 방울로 갈아 끼운다.",
+				"options": [{"id": "close", "label": "가 보자"}]}
 		"sleep":
 			return {"action": "sleep"}
 		"rest":
@@ -373,6 +387,87 @@ func choose(id: String, option: String) -> Dictionary:
 	return {"action": "close"}
 
 
+# ── 빛 밖 ─────────────────────────────────────────
+
+func _house_spots(house_id: String) -> Array:
+	var list := []
+	for sp in Content.HOUSES[house_id].spots:
+		if world.searched.has(sp.id):
+			continue
+		var ok := true
+		for r in sp.get("requires", []):
+			if not notebook.clues.has(r):
+				ok = false
+		if ok:
+			list.append(sp)
+	return list
+
+
+func _house_view(house_id: String, text: String) -> Dictionary:
+	var opts := []
+	for sp in _house_spots(house_id):
+		opts.append({"id": sp.id, "label": sp.label, "primary": opts.is_empty()})
+	if opts.is_empty():
+		text += "\n\n더 살펴볼 곳은 없는 것 같다."
+	opts.append({"id": "close", "label": "나가기"})
+	var lamp := "등불 %d%%" % int(world.lantern_ratio() * 100.0)
+	return {"speaker": "%s · %s" % [Content.HOUSES[house_id].name, lamp], "text": text, "options": opts}
+
+
+func _search_spot(house_id: String, spot_id: String) -> Dictionary:
+	for sp in Content.HOUSES[house_id].spots:
+		if sp.id != spot_id:
+			continue
+		world.search(spot_id)
+		var text: String = sp.text
+		if notebook.add_clue(sp.clue):
+			log_line("%s에서: %s" % [Content.HOUSES[house_id].name, Content.CLUES[sp.clue]])
+			text += "\n\n공책에 적었다: 「%s」" % Content.CLUES[sp.clue]
+		return _house_view(house_id, text)
+	return {"action": "close"}
+
+
+func clue_total() -> int:
+	return Content.CLUES.size()
+
+
+## 등불이 꺼져 기절했다. 털뭉치가 끌고 나온다.
+func faint() -> String:
+	world.lantern_fuel = 0.0
+	furball_light = maxf(5.0, furball_light - 12.0)
+	if not clock.skip_to_next_segment():
+		clock.elapsed = maxf(clock.elapsed, clock.total_seconds() - 5.0)
+	log_line("등불이 꺼져 쓰러졌다. 털뭉치가 어둠 속까지 들어와 나를 끌고 나왔다.")
+	return Content.FAINT_TEXT
+
+
+## 단서 잇기. 고른 단서가 어떤 조합과 정확히 맞으면 규칙을 알아낸다.
+func link_clues(ids: Array) -> Dictionary:
+	var picked := ids.duplicate()
+	picked.sort()
+	for link in Content.LINKS:
+		var need: Array = link.clues.duplicate()
+		need.sort()
+		if need == picked:
+			if notebook.knows(link.rule):
+				return {"ok": false, "text": "이미 알아낸 것이다."}
+			notebook.learn_rule(link.rule)
+			log_line("알아냈다: " + Content.RULES[link.rule])
+			return {"ok": true, "rule": link.rule, "text": Content.RULES[link.rule]}
+	return {"ok": false, "text": "아직 이어지지 않는다. 다른 단서를 골라 보자."}
+
+
+## 지금 가진 단서로 이을 수 있는데 아직 안 이은 조합 수
+func linkable_count() -> int:
+	var n := 0
+	for link in Content.LINKS:
+		if notebook.knows(link.rule):
+			continue
+		if link.clues.all(func(c): return notebook.clues.has(c)):
+			n += 1
+	return n
+
+
 # ── 할 일 ─────────────────────────────────────────
 
 ## 공책 '오늘' 맨 위의 할 일
@@ -395,6 +490,11 @@ func todos() -> Array:
 		list.append("연못에서 낚시 (%d번 남음)" % (WorldState.FISH_TRIES - w.fish_tries))
 	if not w.moru_asked and not w.halmeoni_asked and relationships.points("moru") == 0:
 		list.push_front("이웃들에게 인사하기")
+	var found := notebook.clues.size()
+	if (day >= 2 or cycle > 1 or found > 0) and found < clue_total():
+		list.append("손등불을 들고 빛 밖 빈집 살피기 (단서 %d/%d)" % [found, clue_total()])
+	if linkable_count() > 0:
+		list.append("공책 '알아낸 것'에서 단서 이어 보기")
 	if list.is_empty():
 		list.append("할 일을 다 했다. 집에서 쉬면 시간이 지나간다.")
 	return list
@@ -411,6 +511,8 @@ func furball_hint() -> String:
 		return "밤새 빛이 줄었어. 경계 등불, 꺼진 데가 있었잖아."
 	if w.moru_asked and not w.house_complete():
 		return "모루가 나무 조각 기다려."
+	if day >= 2 and notebook.clues.is_empty():
+		return "저 어둠 너머에 빈집이 있어. …갈 거면 손등불 꼭 들고 가."
 	return "여기서 살려면 등불이 있어야 해. 나무 뿌리에서 빛 방울 받아."
 
 

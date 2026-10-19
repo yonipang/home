@@ -79,11 +79,13 @@ func _ready() -> void:
 
 
 var _forgot_banner := false
+var _shown_tab := -1
 
 
 func open(forgot := false) -> void:
 	_forgot_banner = forgot
 	_tab = 0
+	_shown_tab = -1
 	refresh()
 	show()
 
@@ -101,7 +103,12 @@ func refresh() -> void:
 		0: _fill_days()
 		1: _fill_people()
 		2: _fill_rules()
-	_scroll.scroll_vertical = 0
+	if _tab != _shown_tab:
+		_scroll.scroll_vertical = 0
+	else:
+		var keep := _scroll.scroll_vertical
+		_scroll.set_deferred("scroll_vertical", keep)
+	_shown_tab = _tab
 
 
 func _section(text: String) -> void:
@@ -177,6 +184,10 @@ func _fill_people() -> void:
 		_content.add_child(UIKit.label("아직 아무도 적혀 있지 않다.", 38, UIKit.MUTED, true))
 
 
+var _picked: Array = []
+var _link_result := ""
+
+
 func _fill_rules() -> void:
 	var gs := GameState
 	_section("알아낸 것")
@@ -184,6 +195,36 @@ func _fill_rules() -> void:
 		_content.add_child(UIKit.label("아직 모르는 게 많다.", 38, UIKit.MUTED, true))
 	for r in gs.notebook.rules:
 		_content.add_child(UIKit.label(Content.RULES.get(r, r), 40, UIKit.INK, true))
+	if not gs.notebook.clues.is_empty():
+		_content.add_child(HSeparator.new())
+		_section("단서 · 이어질 것 같은 것들을 골라 '이어 보기'")
+		for c in gs.notebook.clues:
+			var b := UIKit.button(("●  " if _picked.has(c) else "○  ") + Content.CLUES.get(c, c), _picked.has(c))
+			b.add_theme_font_override("font", UIKit.PEN)
+			b.add_theme_font_size_override("font_size", 36)
+			var id: String = c
+			b.pressed.connect(func():
+				if _picked.has(id):
+					_picked.erase(id)
+				else:
+					_picked.append(id)
+				_link_result = ""
+				refresh())
+			_content.add_child(b)
+		var go := UIKit.button("이어 보기 (%d개 고름)" % _picked.size(), true)
+		go.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		go.pressed.connect(func():
+			if _picked.size() < 2:
+				_link_result = "두 개 이상 골라야 한다."
+			else:
+				var r: Dictionary = GameState.link_clues(_picked)
+				_link_result = ("알아냈다!\n" if r.ok else "") + r.text
+				if r.ok:
+					_picked.clear()
+			refresh())
+		_content.add_child(go)
+		if _link_result != "":
+			_content.add_child(UIKit.label(_link_result, 30, UIKit.INK))
 	if gs.tallies.size() > 0:
 		_section("뿌리의 금")
 		var rows := ""

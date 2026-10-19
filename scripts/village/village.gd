@@ -43,6 +43,31 @@ var move_input := Vector2.ZERO
 var walk_target_id := ""
 var _border_warned_at := -10.0
 var _time := 0.0
+## 말랑이: 빛 밖 어둠에 사는 것. { pos, home, phase }
+var malangs: Array = []
+var malang_touch := false
+
+
+func _ready() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	for hid in Content.HOUSES:
+		var hp: Vector2 = Content.HOUSES[hid].pos
+		for i in 3:
+			var home := hp + Vector2.from_angle(rng.randf_range(0, TAU)) * rng.randf_range(160, 340)
+			malangs.append({"pos": home, "home": home, "phase": rng.randf_range(0, TAU)})
+	for i in 6:
+		var home := Vector2.from_angle(TAU * i / 6.0 + 0.5) * rng.randf_range(800, 950)
+		malangs.append({"pos": home, "home": home, "phase": rng.randf_range(0, TAU)})
+
+
+func outside() -> bool:
+	return player_pos.length() > world().radius
+
+
+## 손등불이 비추는 반경 (빛 밖에서만 의미가 있다)
+func view_radius() -> float:
+	return 110.0 + 170.0 * world().lantern_ratio()
 
 
 func world() -> WorldState:
@@ -58,6 +83,8 @@ func spot_pos(id: String) -> Vector2:
 		return furball_pos
 	if SPOTS.has(id):
 		return SPOTS[id]
+	if Content.HOUSES.has(id):
+		return Content.HOUSES[id].pos
 	if id.begins_with("post_"):
 		return world().post_pos(int(id.trim_prefix("post_")))
 	var n := world().find_node(id)
@@ -66,7 +93,7 @@ func spot_pos(id: String) -> Vector2:
 
 ## 지금 탭할 수 있는 대상 id 목록
 func target_ids() -> Array:
-	var ids: Array = SPOTS.keys() + ["furball"]
+	var ids: Array = SPOTS.keys() + ["furball"] + Content.HOUSES.keys()
 	for i in WorldState.POSTS:
 		ids.append("post_%d" % i)
 	for n in world().nodes:
@@ -81,8 +108,8 @@ func target_at(world_pos: Vector2) -> String:
 	var best_d := TAP_RADIUS
 	for id in target_ids():
 		var d := world_pos.distance_to(spot_pos(id))
-		if id == "tree":
-			d = maxf(0.0, d - 50.0)  # 나무는 크다
+		if id == "tree" or Content.HOUSES.has(id):
+			d = maxf(0.0, d - 50.0)  # 나무와 집은 크다
 		if d < best_d:
 			best_d = d
 			best = id
@@ -90,7 +117,8 @@ func target_at(world_pos: Vector2) -> String:
 
 
 func walk_to(id: String) -> void:
-	if id != "furball" and not world().reachable(spot_pos(id)):
+	# 빛 밖(어둠에 먹힌 곳 포함)은 손등불이 있어야 갈 수 있다
+	if id != "furball" and not world().reachable(spot_pos(id)) and not world().lantern_on():
 		blocked_by_dark.emit()
 		return
 	walk_target_id = id
@@ -118,25 +146,55 @@ func step(delta: float) -> void:
 		if p == Vector2.INF:
 			walk_target_id = ""
 		else:
-			var reach := INTERACT_RANGE * (1.3 if walk_target_id == "tree" else 0.8)
+			var big := walk_target_id == "tree" or Content.HOUSES.has(walk_target_id)
+			var reach := INTERACT_RANGE * (1.3 if big else 0.8)
 			var to := p - player_pos
 			if to.length() <= reach:
 				_arrive()
 				dir = Vector2.ZERO
 			else:
 				dir = to.normalized()
-	player_pos += dir.limit_length(1.0) * PLAYER_SPEED * delta
+	var speed := PLAYER_SPEED * (0.65 if outside() else 1.0)  # 어둠 속에서는 조심조심
+	player_pos += dir.limit_length(1.0) * speed * delta
 
-	var limit := light_radius() + 20.0
+	var limit := 1900.0 if world().lantern_on() else light_radius() + 20.0
 	if player_pos.length() > limit:
 		player_pos = player_pos.normalized() * limit
-		if _time - _border_warned_at > 4.0:
+		if not world().lantern_on() and _time - _border_warned_at > 4.0:
 			_border_warned_at = _time
 			blocked_by_border.emit()
 
+	# 털뭉치는 빛 밖으로 따라 나오지 않는다 (어둠에 들어가면 흐려지니까)
 	var follow := player_pos + Vector2(-46, 26)
+	var edge := world().radius - 50.0
+	if follow.length() > edge:
+		follow = follow.normalized() * edge
 	furball_pos = furball_pos.lerp(follow, clampf(delta * 3.5, 0.0, 1.0))
+	_step_malangs(delta)
 	queue_redraw()
+
+
+func _step_malangs(delta: float) -> void:
+	malang_touch = false
+	var out := outside()
+	var weak := world().lantern_ratio() < 0.5
+	for m in malangs:
+		var to_player: Vector2 = player_pos - m.pos
+		var d := to_player.length()
+		var wander: Vector2 = m.home + Vector2(cos(_time * 0.4 + m.phase), sin(_time * 0.3 + m.phase)) * 60.0
+		var target := wander
+		if out and d < 380.0:
+			if weak:
+				target = player_pos  # 약한 빛과 온기에 몰려든다
+			elif d < 230.0:
+				target = m.pos - to_player.normalized() * 100.0  # 강한 빛은 피한다
+		var spd := 85.0 if (out and weak and d < 380.0) else 45.0
+		m.pos = m.pos.move_toward(target, spd * delta)
+		# 빛의 원 안으로는 들어오지 못한다
+		if m.pos.length() < world().radius + 30.0:
+			m.pos = m.pos.normalized() * (world().radius + 30.0)
+		if out and m.pos.distance_to(player_pos) < 42.0:
+			malang_touch = true
 
 
 # ── 그리기 ────────────────────────────────────────
@@ -150,6 +208,12 @@ func _draw() -> void:
 	var r := light_radius()
 	var b := GameState.clock.breath()
 	draw_rect(Rect2(-3000, -3000, 6000, 6000), C_DARK)
+	# 손등불 (빛 밖에서만)
+	var out := outside()
+	var vr := view_radius()
+	if out and world().lantern_on():
+		draw_circle(player_pos, vr, Color(0.2, 0.17, 0.12))
+		draw_circle(player_pos, vr * 0.6, Color(0.27, 0.22, 0.15))
 	draw_circle(Vector2.ZERO, r, C_DARK.lerp(C_LIGHT_OUT, b))
 	draw_circle(Vector2.ZERO, r * 0.78, C_DARK.lerp(C_LIGHT_MID, b))
 	draw_circle(Vector2.ZERO, r * 0.5, C_DARK.lerp(C_LIGHT_IN, b))
@@ -157,7 +221,22 @@ func _draw() -> void:
 	if w.radius < WorldState.START_RADIUS - 1.0:
 		_dashed_circle(Vector2.ZERO, WorldState.START_RADIUS, Color(0.3, 0.28, 0.25, 0.6))
 
-	_draw_house(Vector2(620, -760), "빈집", false, 1.0)
+
+	# 빛 밖 빈집 — 등불이 비출 때만 보인다
+	for hid in Content.HOUSES:
+		var hp: Vector2 = Content.HOUSES[hid].pos
+		if out and world().lantern_on() and hp.distance_to(player_pos) < vr + 80.0:
+			_draw_empty_house(hid, hp)
+
+	# 말랑이 — 등불 가장자리에서 어렴풋이
+	if out:
+		for m in malangs:
+			var md: float = m.pos.distance_to(player_pos)
+			if md < vr * 1.4:
+				var a := clampf(1.0 - md / (vr * 1.4), 0.0, 1.0)
+				var wob := sin(_time * 3.0 + m.phase) * 4.0
+				draw_circle(m.pos, 26.0 + wob, Color(0.24, 0.38, 0.24, 0.85 * a))
+				draw_circle(m.pos + Vector2(14, 8), 15.0 - wob * 0.5, Color(0.24, 0.38, 0.24, 0.7 * a))
 
 	# 버섯숲 표시
 	_label(Vector2.from_angle(WorldState.MUSHROOM_ANGLE) * r * 0.72 + Vector2(0, 70), "버섯숲", Color(0.45, 0.6, 0.62))
@@ -216,6 +295,25 @@ func _draw() -> void:
 	_draw_furball()
 	draw_circle(player_pos, 24, C_PAPER)
 	draw_arc(player_pos, 24, 0, TAU, 32, C_AMBER, 4.0)
+
+
+func _draw_empty_house(hid: String, pos: Vector2) -> void:
+	var w := 130.0
+	var h := 96.0
+	var rect := Rect2(pos - Vector2(w, h) / 2, Vector2(w, h))
+	draw_rect(rect, Color(0.16, 0.15, 0.13))
+	draw_rect(rect, Color(0.5, 0.47, 0.42), false, 3.0)
+	# 창문은 나무 쪽으로
+	var win := pos + (-pos).normalized() * 40.0
+	draw_rect(Rect2(win - Vector2(14, 12), Vector2(28, 24)), Color(0.3, 0.27, 0.22))
+	if hid == "house_west":
+		draw_rect(Rect2(pos + Vector2(-14, 8), Vector2(28, 40)), Color(0.55, 0.22, 0.17))
+	elif hid == "house_mid":
+		for i in 4:
+			draw_circle(pos + Vector2(-40 + i * 22, 52), 4, Color(0.6, 0.65, 0.68, 0.6))
+	var left := GameState._house_spots(hid).size()
+	var name: String = Content.HOUSES[hid].name
+	_label(pos + Vector2(0, h / 2 + 30), name + (" · 살필 곳 %d" % left if left > 0 else ""), C_MUTED)
 
 
 func _draw_field() -> void:
