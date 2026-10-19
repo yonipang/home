@@ -47,6 +47,16 @@ var walk_target_id := ""
 var _border_warned_at := -10.0
 var _time := 0.0
 var _furball_facing := 1.0
+var player_gait := Gait.new()
+var _player_facing := 1.0
+## 털뭉치는 걷지 않고 통통 튄다 (원작: "통통 튀며", "폴짝폴짝")
+var _hop_t := -1.0
+var _hop_from := Vector2.ZERO
+var _hop_to := Vector2.ZERO
+var _hop_dur := 0.24
+var _hop_rest := 0.0
+var _fur_squash := 0.0
+var _dust: Array = []  # {pos, t}
 ## 말랑이: 빛 밖 어둠에 사는 것. { pos, home, phase }
 var malangs: Array = []
 var malang_touch := false
@@ -160,9 +170,11 @@ func step(delta: float) -> void:
 			else:
 				dir = to.normalized()
 	var speed := PLAYER_SPEED * (0.65 if outside() else 1.0)  # 어둠 속에서는 조심조심
+	var prev := player_pos
 	player_pos += dir.limit_length(1.0) * speed * delta
 
-	var limit := 1900.0 if world().lantern_on() else light_radius() + 20.0
+	# 등불이 없으면 빛의 원 안쪽까지만 (경계에 발끝을 맞추고 선다)
+	var limit := 1900.0 if world().lantern_on() else world().radius - 4.0
 	if player_pos.length() > limit:
 		player_pos = player_pos.normalized() * limit
 		if not world().lantern_on() and _time - _border_warned_at > 4.0:
@@ -170,17 +182,49 @@ func step(delta: float) -> void:
 			blocked_by_border.emit()
 
 	# 털뭉치는 빛 밖으로 따라 나오지 않는다 (어둠에 들어가면 흐려지니까)
-	var follow := player_pos + Vector2(-46, 26)
+	var follow := player_pos + Vector2(-46 * _player_facing, 26)  # 털뭉치는 늘 내 뒤를 따른다
 	var edge := world().radius - 50.0
 	if follow.length() > edge:
 		follow = follow.normalized() * edge
-	var before := furball_pos
-	furball_pos = furball_pos.lerp(follow, clampf(delta * 3.5, 0.0, 1.0))
-	var dx := furball_pos.x - before.x
-	if absf(dx) > 0.6:
-		_furball_facing = signf(dx)
+	_step_furball(delta, follow)
+	var moved := player_pos.distance_to(prev)
+	if absf(player_pos.x - prev.x) > 0.5:
+		_player_facing = signf(player_pos.x - prev.x)
+	if player_gait.update(delta, moved) and outside() == false:
+		_dust.append({"pos": player_pos + Vector2(0, 22), "t": 0.0, "size": 0.6})
+	for d in _dust:
+		d.t += delta
+	_dust = _dust.filter(func(d): return d.t < 0.45)
 	_step_malangs(delta)
 	queue_redraw()
+
+
+func _step_furball(delta: float, follow: Vector2) -> void:
+	_fur_squash = move_toward(_fur_squash, 0.0, delta * 4.0)
+	if _hop_t >= 0.0:
+		_hop_t += delta / _hop_dur
+		furball_pos = _hop_from.lerp(_hop_to, clampf(_hop_t, 0.0, 1.0))
+		if _hop_t >= 1.0:
+			_hop_t = -1.0
+			_hop_rest = 0.05
+			_fur_squash = 1.0
+			_dust.append({"pos": furball_pos + Vector2(0, 16), "t": 0.0, "size": 1.0})
+		return
+	_hop_rest -= delta
+	var to := follow - furball_pos
+	var dist := to.length()
+	if _hop_rest > 0.0 or dist < 28.0:
+		return
+	if dist > 600.0:  # 쓰러졌다 깨어나는 등 멀리 떨어지면 바로 옆으로
+		furball_pos = follow
+		return
+	var length := minf(dist, 92.0 if dist > 140.0 else 64.0)
+	_hop_from = furball_pos
+	_hop_to = furball_pos + to.normalized() * length
+	_hop_dur = 0.22 if dist > 140.0 else 0.26
+	_hop_t = 0.0
+	if absf(to.x) > 4.0:
+		_furball_facing = signf(to.x)
 
 
 func _step_malangs(delta: float) -> void:
@@ -301,9 +345,14 @@ func _draw() -> void:
 		if tp != Vector2.INF:
 			_draw_ring(tp, 46.0)
 
-	_draw_furball()
-	draw_circle(player_pos, 24, C_PAPER)
-	draw_arc(player_pos, 24, 0, TAU, 32, C_AMBER, 4.0)
+	_draw_dust()
+	# 아래쪽에 있는 쪽을 나중에 그려 앞에 보이게 한다
+	if furball_pos.y > player_pos.y:
+		_draw_player()
+		_draw_furball()
+	else:
+		_draw_furball()
+		_draw_player()
 
 
 func _draw_empty_house(hid: String, pos: Vector2) -> void:
@@ -402,20 +451,52 @@ func _draw_npc(id: String) -> void:
 func _draw_furball() -> void:
 	var light := GameState.furball_light / 100.0
 	var s := 0.45 + 0.55 * light
-	var bob := sin(_time * 3.0) * 2.0
-	var p := furball_pos + Vector2(0, bob)
 	var h := FURBALL_HEIGHT * s
 	var w := h * FURBALL_TEX.get_width() / FURBALL_TEX.get_height()
-	# 발밑 그림자와, 어둠에 묻히지 않게 하는 은은한 빛
+	var ground := furball_pos
+	var lift := 0.0
+	var stretch := 0.0
+	if _hop_t >= 0.0:
+		lift = sin(clampf(_hop_t, 0.0, 1.0) * PI) * 16.0 * s
+		stretch = sin(clampf(_hop_t, 0.0, 1.0) * PI) * 0.08  # 뛰어오를 때 살짝 길쭉해진다
+	var breath := sin(_time * 2.3) * 0.03 if _hop_t < 0.0 else 0.0
+	var sq := _fur_squash * 0.16
+	var sc := Vector2(1.0 + sq - stretch * 0.6 - breath * 0.5, 1.0 - sq + stretch + breath)
+	# 발밑 그림자는 땅에 남고, 몸이 떠오를수록 작아진다
+	var shadow := 1.0 - lift / (40.0 * s)
+	_draw_ellipse(ground + Vector2(0, h * 0.42), Vector2(w * 0.36, h * 0.09) * shadow, Color(0, 0, 0, 0.28))
+	# 어둠에 묻히지 않게 하는 은은한 빛 (행복할수록 밝다)
 	var glow := 0.16 + 0.14 * GameState.happiness.ratio()
+	var body := ground + Vector2(0, -lift)
 	for i in 4:
-		draw_circle(p + Vector2(0, -h * 0.1), h * (0.7 - i * 0.1), Color(C_AMBER, glow * 0.35))
-	_draw_ellipse(p + Vector2(0, h * 0.42), Vector2(w * 0.36, h * 0.09), Color(0, 0, 0, 0.28))
+		draw_circle(body + Vector2(0, -h * 0.1), h * (0.7 - i * 0.1), Color(C_AMBER, glow * 0.35))
 	# 빛을 많이 나눠 줄수록 털 끝이 투명해진다
 	var tint := Color(1, 1, 1, 0.55 + 0.45 * light)
-	draw_set_transform(p, 0.0, Vector2(_furball_facing, 1.0))
-	draw_texture_rect(FURBALL_TEX, Rect2(Vector2(-w * 0.5, -h * 0.55), Vector2(w, h)), false, tint)
+	# 발밑을 기준으로 늘이고 줄인다
+	var feet := ground + Vector2(0, h * 0.45 - lift)
+	draw_set_transform(feet, 0.0, Vector2(_furball_facing * sc.x, sc.y))
+	draw_texture_rect(FURBALL_TEX, Rect2(Vector2(-w * 0.5, -h), Vector2(w, h)), false, tint)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_player() -> void:
+	var g := player_gait
+	var lift := g.lift()
+	_draw_ellipse(player_pos + Vector2(0, 22), Vector2(20, 6) * (1.0 - lift / 20.0), Color(0, 0, 0, 0.25))
+	var sc := g.scale()
+	draw_set_transform(player_pos + Vector2(0, 22 - lift), g.tilt(), sc)
+	draw_circle(Vector2(0, -22), 24, C_PAPER)
+	draw_arc(Vector2(0, -22), 24, 0, TAU, 32, C_AMBER, 4.0)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_dust() -> void:
+	for d in _dust:
+		var k: float = d.t / 0.45
+		var a := (1.0 - k) * 0.35
+		for side in [-1.0, 1.0]:
+			var p: Vector2 = d.pos + Vector2(side * (6.0 + 14.0 * k), -4.0 * k)
+			draw_circle(p, (3.0 + 4.0 * k) * d.size, Color(0.85, 0.78, 0.62, a))
 
 
 func _draw_ellipse(c: Vector2, r: Vector2, col: Color) -> void:

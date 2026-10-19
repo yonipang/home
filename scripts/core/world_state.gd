@@ -151,7 +151,7 @@ func burn_lantern(delta: float, outside: bool, drained: bool) -> String:
 	if not outside:
 		return "ok"
 	if lantern_fuel <= 0.0:
-		return "out"
+		return "unlit"  # 켜지 않은 등불은 꺼질 것도 없다 (쓰러지는 건 타다가 꺼질 때만)
 	lantern_fuel -= delta * (1.0 + (MALANG_DRAIN if drained else 0.0))
 	if lantern_fuel > 0.0:
 		return "ok"

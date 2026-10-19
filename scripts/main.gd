@@ -32,6 +32,7 @@ var _was_outside := false
 var _low_warned := false
 var _args := {}
 var _toast_tween: Tween
+var _dev_move := Vector2.ZERO  # --shot=walk 전용
 
 
 func _ready() -> void:
@@ -136,6 +137,8 @@ func _process(delta: float) -> void:
 	else:
 		var keys := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 		village.move_input = joystick.vector if joystick.vector.length() > 0.05 else keys
+		if _dev_move != Vector2.ZERO:
+			village.move_input = _dev_move
 		village.step(delta)
 		_update_lantern(delta)
 		var seg: int = GameState.clock.advance(delta * time_scale)
@@ -462,6 +465,9 @@ func _take_shot(scene: String, out: String) -> void:
 			notebook._tab = 2
 			notebook._picked = ["w_paper", "w_chair"]
 			notebook.refresh()
+		"walk":
+			village.player_pos = Vector2(-160, 120)
+			village.furball_pos = Vector2(-200, 140)
 		"sleep":
 			gs.notebook.learn_rule("forget")
 			gs.gain("party")
@@ -480,6 +486,9 @@ func _take_shot(scene: String, out: String) -> void:
 				gs.end_day("sleep")
 			gs.end_day("sleep")
 			notebook.open(true)
+	if scene == "walk":
+		await _capture_walk(out)
+		return
 	for i in 40:
 		await get_tree().process_frame
 	camera.reset_smoothing()
@@ -487,4 +496,20 @@ func _take_shot(scene: String, out: String) -> void:
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(out)
 	print("saved ", out)
+	get_tree().quit(0)
+
+
+## 걷는 모습을 여러 장으로 저장한다 (움직임 확인용)
+func _capture_walk(out: String) -> void:
+	Engine.max_fps = 30
+	for i in 20:
+		await get_tree().process_frame
+	camera.reset_smoothing()
+	for f in 48:
+		_dev_move = Vector2(1, 0.15) if f < 18 else (Vector2(-1, 0.1) if f < 34 else Vector2.ZERO)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		var img := get_viewport().get_texture().get_image()
+		img.save_png(out.replace(".png", "_%02d.png" % f))
+	print("saved walk frames")
 	get_tree().quit(0)

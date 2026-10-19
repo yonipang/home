@@ -28,7 +28,7 @@
   ```
 - 화면을 바꿨으면 스크린샷으로 직접 확인한다 (xvfb 필요):
   `xvfb-run -a godot --rendering-driver opengl3 --resolution 720x1280 -- --shot=village --out=/tmp/v.png`
-  장면: `village`, `dialogue`, `notebook`, `fishing`, `sleep`, `morning`, `forgot`, `explore`, `house`, `clues`
+  장면: `village`, `dialogue`, `notebook`, `fishing`, `sleep`, `morning`, `forgot`, `explore`, `house`, `clues`, `walk`(걷는 모습 48장)
 - 터치 영역은 최소 88px(720 기준). 선택지는 화면 아래쪽에 둔다.
 - 한글 조사는 `Content.josa()`를 쓴다. 글꼴: 본문 Gowun Dodum(KS X 1001 2,350자 부분집합), 공책 손글씨 Nanum Pen Script(원본 그대로 — OFL 예약 이름 때문에 수정 금지).
 - `main` 푸시 = GitHub Pages 자동 배포 (https://yonipang.github.io/home/). 테스트가 실패하면 배포되지 않는다.

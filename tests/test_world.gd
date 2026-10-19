@@ -112,3 +112,12 @@ func test_lantern_goes_out_at_night() -> void:
 	w.light_lantern()
 	w.end_night(false)
 	check(not w.lantern_on(), "lantern out overnight")
+
+
+func test_unlit_lantern_never_faints() -> void:
+	var w := WorldState.new()
+	eq(w.burn_lantern(1.0, true, false), "unlit", "no lantern, nothing goes out")
+	w.items.drop = 1
+	w.light_lantern()
+	eq(w.burn_lantern(WorldState.LANTERN_SECONDS + 1.0, true, false), "out", "a burning lantern can go out")
+	eq(w.burn_lantern(1.0, true, false), "unlit", "and then it is just unlit")
