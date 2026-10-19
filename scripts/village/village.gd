@@ -7,6 +7,9 @@ signal blocked_by_border
 signal blocked_by_dark
 
 const FONT := preload("res://assets/fonts/GowunDodum-Regular.ttf")
+const FURBALL_TEX := preload("res://assets/art/characters/furball.png")
+## 털뭉치 그림의 화면 높이 (빛이 가득할 때)
+const FURBALL_HEIGHT := 66.0
 
 const C_DARK := Color(0.055, 0.05, 0.043)
 const C_LIGHT_OUT := Color(0.23, 0.2, 0.15)
@@ -43,12 +46,14 @@ var move_input := Vector2.ZERO
 var walk_target_id := ""
 var _border_warned_at := -10.0
 var _time := 0.0
+var _furball_facing := 1.0
 ## 말랑이: 빛 밖 어둠에 사는 것. { pos, home, phase }
 var malangs: Array = []
 var malang_touch := false
 
 
 func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	for hid in Content.HOUSES:
@@ -169,7 +174,11 @@ func step(delta: float) -> void:
 	var edge := world().radius - 50.0
 	if follow.length() > edge:
 		follow = follow.normalized() * edge
+	var before := furball_pos
 	furball_pos = furball_pos.lerp(follow, clampf(delta * 3.5, 0.0, 1.0))
+	var dx := furball_pos.x - before.x
+	if absf(dx) > 0.6:
+		_furball_facing = signf(dx)
 	_step_malangs(delta)
 	queue_redraw()
 
@@ -391,15 +400,30 @@ func _draw_npc(id: String) -> void:
 
 
 func _draw_furball() -> void:
-	var s := 0.45 + 0.55 * GameState.furball_light / 100.0
+	var light := GameState.furball_light / 100.0
+	var s := 0.45 + 0.55 * light
 	var bob := sin(_time * 3.0) * 2.0
 	var p := furball_pos + Vector2(0, bob)
-	draw_circle(p, 22.0 * s, Color(0.6, 0.59, 0.56))
-	draw_circle(p + Vector2(-7, -3) * s, 3.2, C_DARK)
-	draw_circle(p + Vector2(7, -3) * s, 3.2, C_DARK)
-	if GameState.happiness.ratio() > 0.66:
-		draw_circle(p + Vector2(-12, 4) * s, 3.5, Color(0.9, 0.55, 0.5, 0.7))
-		draw_circle(p + Vector2(12, 4) * s, 3.5, Color(0.9, 0.55, 0.5, 0.7))
+	var h := FURBALL_HEIGHT * s
+	var w := h * FURBALL_TEX.get_width() / FURBALL_TEX.get_height()
+	# 발밑 그림자와, 어둠에 묻히지 않게 하는 은은한 빛
+	var glow := 0.16 + 0.14 * GameState.happiness.ratio()
+	for i in 4:
+		draw_circle(p + Vector2(0, -h * 0.1), h * (0.7 - i * 0.1), Color(C_AMBER, glow * 0.35))
+	_draw_ellipse(p + Vector2(0, h * 0.42), Vector2(w * 0.36, h * 0.09), Color(0, 0, 0, 0.28))
+	# 빛을 많이 나눠 줄수록 털 끝이 투명해진다
+	var tint := Color(1, 1, 1, 0.55 + 0.45 * light)
+	draw_set_transform(p, 0.0, Vector2(_furball_facing, 1.0))
+	draw_texture_rect(FURBALL_TEX, Rect2(Vector2(-w * 0.5, -h * 0.55), Vector2(w, h)), false, tint)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_ellipse(c: Vector2, r: Vector2, col: Color) -> void:
+	var pts := PackedVector2Array()
+	for i in 24:
+		var a := TAU * i / 24.0
+		pts.append(c + Vector2(cos(a) * r.x, sin(a) * r.y))
+	draw_colored_polygon(pts, col)
 
 
 func _draw_ring(p: Vector2, radius: float) -> void:
