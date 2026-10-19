@@ -2,7 +2,7 @@ extends SceneTree
 ## 헤드리스 테스트 실행기.
 ## godot --headless --script res://tests/run_tests.gd
 
-const SUITES := ["res://tests/test_core.gd", "res://tests/test_game_state.gd"]
+const SUITES := ["res://tests/test_core.gd", "res://tests/test_world.gd", "res://tests/test_game_state.gd"]
 
 
 func _init() -> void:

@@ -78,7 +78,12 @@ func _ready() -> void:
 	hide()
 
 
-func open() -> void:
+var _forgot_banner := false
+
+
+func open(forgot := false) -> void:
+	_forgot_banner = forgot
+	_tab = 0
 	refresh()
 	show()
 
@@ -108,6 +113,18 @@ func _section(text: String) -> void:
 func _fill_days() -> void:
 	var gs := GameState
 	var entries: Array = gs.notebook.entries.duplicate()
+	if _forgot_banner:
+		var banner := PanelContainer.new()
+		banner.add_theme_stylebox_override("panel", UIKit.box(UIKit.PAPER_OLD, Color(0, 0, 0, 0), 12, 0, 20))
+		banner.add_child(UIKit.label(Content.FORGOT_BANNER, 30, UIKit.INK))
+		_content.add_child(banner)
+	var todos: Array = gs.todos()
+	if not todos.is_empty():
+		_section("할 일")
+		for t in todos:
+			_content.add_child(UIKit.label("·  " + t, 28, UIKit.INK))
+		_content.add_child(HSeparator.new())
+	_section("주머니 · 나무 조각 %d · 빛버섯 %d · 빛 방울 %d" % [gs.world.items.wood, gs.world.items.mushroom, gs.world.items.drop])
 	if entries.is_empty():
 		_section("아직 아무것도 적지 않았다.")
 		_content.add_child(UIKit.label("오늘 있었던 일은 저절로 여기에 적힌다.", 40, UIKit.INK, true))

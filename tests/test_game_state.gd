@@ -16,75 +16,118 @@ func _fresh() -> Node:
 	return gs
 
 
-func _make_good_day(gs: Node) -> void:
-	for id in ["halmeoni", "moru", "gussi"]:
-		gs.talk(id)
-		gs.talk(id)
-	gs.cook()
+## 평범한 일과 + 모루네 잔치
+func _make_party_day(gs: Node) -> void:
+	gs.world.items.wood = WorldState.HOUSE_WOOD
+	gs.world.items.mushroom = 1
+	gs.interaction("halmeoni")
+	gs.choose("halmeoni", "help")
+	gs.interaction("gussi")
+	gs.choose("gussi", "sit")
+	gs.interaction("moru")
+	if gs.can_greet_from_notebook("moru"):
+		gs.choose("moru", "greet")
+	if not gs.world.house_complete():
+		gs.choose("moru", "give")
+	gs.interaction("hearth")
+	gs.choose("hearth", "cook")
 	gs.clock.skip_to_evening()
-	check(gs.activity_available("moru"), "party is available in the evening once Moru is a neighbour")
-	gs.do_activity("moru")
+	var opts: Array = gs.npc_options("moru").map(func(o): return o.id)
+	check(opts.has("party"), "party offered in the evening once the house is done")
+	gs.choose("moru", "party")
 
 
-func test_ordinary_day_keeps_memory() -> void:
+func test_ordinary_day_cannot_fill_happiness() -> void:
 	var gs := _fresh()
-	gs.talk("moru")
-	gs.talk("moru")
-	var r: Dictionary = gs.end_day("sleep")
-	check(not r.forgot, "ordinary day does not forget")
-	eq(gs.day, 2, "day advances")
-	eq(gs.relationships.stage("moru"), 1, "relationship kept")
-	eq(gs.morning_line, Content.MORNING_NORMAL, "normal morning line")
+	gs.world.items.wood = 3
+	gs.world.items.mushroom = 1
+	gs.world.items.drop = 6
+	for i in 4:
+		for id in ["halmeoni", "moru", "gussi", "furball"]:
+			gs.interaction(id)
+	gs.choose("halmeoni", "help")
+	gs.choose("gussi", "sit")
+	gs.choose("moru", "give")
+	gs.choose("hearth", "cook")
+	gs.choose("field", "water")
+	for i in WorldState.POSTS:
+		gs.interaction("post_%d" % i)
+	check(not gs.happiness.is_full(), "an ordinary busy day is not a very good day (%.0f)" % gs.happiness.value)
 	gs.free()
 
 
-func test_very_good_day_forgets_but_notebook_stays() -> void:
+func test_relationship_grows_once_per_day_per_kind() -> void:
 	var gs := _fresh()
-	_make_good_day(gs)
+	for i in 5:
+		gs.interaction("moru")
+	eq(gs.relationships.points("moru"), 1, "talking many times counts once")
+	gs.world.items.wood = 1
+	gs.choose("moru", "give")
+	eq(gs.relationships.points("moru"), 2, "doing something together counts once more")
+	gs.free()
+
+
+func test_party_day_forgets_but_world_and_notebook_stay() -> void:
+	var gs := _fresh()
+	_make_party_day(gs)
 	check(gs.happiness.is_full(), "party day fills happiness")
 	check(not gs.night_choices_available(), "act 1: no choice before the rule is known")
-	var entries_before: int = gs.notebook.entries.size()
 	var r: Dictionary = gs.end_day("sleep")
 	check(r.forgot, "forgets after a very good day")
 	check(r.learned_rule, "learns the forgetting rule")
 	eq(gs.cycle, 2, "second self")
 	eq(gs.day, 1, "day count restarts")
-	eq(gs.tallies, [1], "tally of the first self kept")
 	eq(gs.relationships.stage("moru"), 0, "relationships reset")
-	check(gs.notebook.entries.size() > entries_before, "notebook kept and extended")
-	eq(gs.notebook.person_stage("moru"), 1, "notebook remembers Moru")
+	check(gs.world.house_complete(), "the house is still standing")
+	check(not gs.world.moru_asked, "Moru forgot asking")
+	check(gs.notebook.person_stage("moru") >= 1, "notebook remembers Moru")
+	eq(gs.notebook.chosen_line(1, 1), Content.GOOD_DAY_MONOLOGUE, "the last line of the first self")
 	gs.free()
 
 
-func test_after_rule_choices_and_walk_avoids_forgetting() -> void:
+func test_after_forgetting_greet_and_choices() -> void:
 	var gs := _fresh()
-	_make_good_day(gs)
+	_make_party_day(gs)
 	gs.end_day("sleep")
-	_make_good_day(gs)
+	var t: Dictionary = gs.interaction("moru")
+	eq(t.hint, Content.NPCS.moru.forgot_hint, "habit hint after forgetting")
+	check(gs.notebook.knows("hands"), "learns that made things remain")
+	check(gs.can_greet_from_notebook("moru"), "can greet Moru from the notebook")
+	_make_party_day(gs)
 	check(gs.night_choices_available(), "choices appear once the rule is known")
 	var r: Dictionary = gs.end_day("walk")
 	check(not r.forgot, "a night walk calms the day down")
-	check(gs.furball_light < 100.0, "the walk costs the furball some light")
 	gs.free()
 
 
-func test_greet_from_notebook_restores() -> void:
+func test_fishing_flow() -> void:
 	var gs := _fresh()
-	_make_good_day(gs)
+	var opts: Array = gs.npc_options("gussi").map(func(o): return o.id)
+	check(not opts.has("rod"), "no rod for strangers")
+	gs.relationships.restore_stage("gussi", 2)
+	gs.choose("gussi", "rod")
+	eq(gs.interaction("pond").options[0].id, "fish", "fishing offered at the pond")
+	var before: float = gs.happiness.value
+	gs.fish_result(true)
+	check(gs.happiness.value - before >= 59.0, "first fish is a big day")
+	gs.free()
+
+
+func test_todos_and_hint() -> void:
+	var gs := _fresh()
+	check(gs.todos().has("이웃들에게 인사하기"), "first todo is to meet people")
+	gs.interaction("halmeoni")
+	gs.choose("field", "water")
 	gs.end_day("sleep")
-	check(gs.can_greet_from_notebook("moru"), "can greet Moru from the notebook")
-	var s: int = gs.greet_from_notebook("moru")
-	eq(s, 1, "restored to the recorded stage")
-	eq(gs.relationships.stage("moru"), 1, "relationship restored")
-	check(not gs.can_greet_from_notebook("moru"), "no second restore")
-	var t: Dictionary = gs.talk("halmeoni")
-	eq(t.hint, Content.NPCS.halmeoni.forgot_hint, "habit hint after forgetting")
+	eq(gs.furball_hint(), "할머니 호박, 오늘 물 안 주면 시들어.", "furball reminds about the pumpkin")
+	check(gs.todos().any(func(t): return t.begins_with("할머니 호박")), "pumpkin todo")
 	gs.free()
 
 
 func test_save_and_suspend_round_trip() -> void:
 	var gs := _fresh()
-	gs.talk("gussi")
+	gs.interaction("gussi")
+	gs.world.house_wood = 4
 	gs.clock.elapsed = 123.0
 	gs.player_position = Vector2(10, 20)
 	gs.save_suspend()
@@ -92,6 +135,7 @@ func test_save_and_suspend_round_trip() -> void:
 	eq(other.load_or_new(), "suspend", "suspend is loaded first")
 	eq(other.clock.elapsed, 123.0, "mid-day time restored")
 	eq(other.player_position, Vector2(10, 20), "position restored")
+	eq(other.world.house_wood, 4, "world restored")
 	check(not FileAccess.file_exists(SUSPEND), "suspend deleted after loading")
 	other.end_day("sleep")
 	var third := _fresh_keep_files()

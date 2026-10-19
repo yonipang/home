@@ -1,9 +1,10 @@
 extends Node
-## 마을 화면 전체를 묶는다: 마을, 카메라, 조이스틱, 대화창, 공책, 하루 마감, 아침.
+## 마을 화면 전체를 묶는다: 마을, 카메라, 조이스틱, 대화창, 공책, 낚시, 하루 마감, 아침.
 ##
 ## 개발용 실행 인자 (godot ... -- <인자>):
-##   --smoke                  하루를 자동으로 돌려 보고 종료 (CI)
-##   --shot=<장면> --out=<png>  스크린샷 저장 후 종료. 장면: village, dialogue, notebook, sleep, morning
+##   --smoke                  며칠을 자동으로 돌려 보고 종료 (CI)
+##   --shot=<장면> --out=<png>  스크린샷 저장 후 종료.
+##                            장면: village, dialogue, notebook, fishing, sleep, morning, forgot
 
 const Village := preload("res://scripts/village/village.gd")
 const Joystick := preload("res://scripts/ui/floating_joystick.gd")
@@ -11,12 +12,14 @@ const DialoguePanel := preload("res://scripts/ui/dialogue_panel.gd")
 const NotebookPanel := preload("res://scripts/ui/notebook_panel.gd")
 const SleepPanel := preload("res://scripts/ui/sleep_panel.gd")
 const MorningOverlay := preload("res://scripts/ui/morning_overlay.gd")
+const FishingPanel := preload("res://scripts/ui/fishing_panel.gd")
 
 var village: Node2D
 var camera: Camera2D
 var joystick: Control
 var dialogue: Control
 var notebook: PanelContainer
+var fishing: Control
 var sleep_panel: PanelContainer
 var morning: PanelContainer
 var notebook_button: Button
@@ -25,6 +28,7 @@ var toast: Label
 var time_scale := 1.0
 var _talking_to := ""
 var _args := {}
+var _toast_tween: Tween
 
 
 func _ready() -> void:
@@ -57,6 +61,7 @@ func _build() -> void:
 	add_child(village)
 	village.arrived.connect(_interact)
 	village.blocked_by_border.connect(func(): _toast("털뭉치: 「아직 안 돼. 아무것도 없이 들어가면 길 잃어.」"))
+	village.blocked_by_dark.connect(func(): _toast("어둠 속이라 갈 수 없다. 빛의 원이 줄어든 탓이다."))
 
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = true
@@ -81,7 +86,7 @@ func _build() -> void:
 		notebook_button.add_theme_stylebox_override(st, UIKit.box(Color(0.1, 0.09, 0.08, 0.7), Color(0.54, 0.53, 0.5), 16, 2, 12))
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		notebook_button.add_theme_color_override(c, UIKit.LIGHT_TEXT)
-	notebook_button.pressed.connect(_open_notebook)
+	notebook_button.pressed.connect(func(): notebook.open())
 	ui.add_child(notebook_button)
 
 	toast = UIKit.label("", 28, UIKit.LIGHT_TEXT)
@@ -97,6 +102,8 @@ func _build() -> void:
 	dialogue = DialoguePanel.new()
 	ui.add_child(dialogue)
 	dialogue.chosen.connect(_on_dialogue_choice)
+	fishing = FishingPanel.new()
+	ui.add_child(fishing)
 	notebook = NotebookPanel.new()
 	ui.add_child(notebook)
 	notebook.fast_time_toggled.connect(func(on): time_scale = 10.0 if on else 1.0)
@@ -105,11 +112,11 @@ func _build() -> void:
 	sleep_panel.finished.connect(_on_sleep_finished)
 	morning = MorningOverlay.new()
 	ui.add_child(morning)
-	morning.done.connect(func(): _toast(GameState.clock.segment_name()))
+	morning.done.connect(_on_morning_done)
 
 
 func _modal_open() -> bool:
-	return dialogue.visible or notebook.visible or sleep_panel.visible or morning.visible
+	return dialogue.visible or notebook.visible or sleep_panel.visible or morning.visible or fishing.visible
 
 
 func _process(delta: float) -> void:
@@ -139,12 +146,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _modal_open():
 		return
 	if event.is_action_pressed("notebook"):
-		_open_notebook()
+		notebook.open()
 	elif event.is_action_pressed("interact"):
 		var best := ""
 		var best_d := Village.INTERACT_RANGE * 1.4
-		for id in Village.SPOTS.keys() + ["furball"]:
+		for id in village.target_ids():
 			var d: float = village.player_pos.distance_to(village.spot_pos(id))
+			if id == "tree":
+				d -= 50.0
 			if d < best_d:
 				best_d = d
 				best = id
@@ -164,65 +173,41 @@ func _on_tap(screen_pos: Vector2) -> void:
 		village.walk_to(id)
 
 
-func _open_notebook() -> void:
-	notebook.open()
-
-
 # ── 상호작용 ──────────────────────────────────────
 
 func _interact(id: String) -> void:
 	_talking_to = id
-	var gs := GameState
-	if Content.NPCS.has(id):
-		var npc: Dictionary = Content.NPCS[id]
-		var res: Dictionary = gs.talk(id)
-		var opts := []
-		if gs.activity_available(id):
-			opts.append({"id": "activity", "label": npc.activity.label, "primary": true})
-		elif npc.activity.get("evening_only", false) and gs.relationships.stage(id) >= int(npc.activity.get("min_stage", 0)) \
-				and gs.happiness.times_done("act_" + npc.activity.id) == 0:
-			res.line += "\n(저녁에 다시 오면 %s 할 수 있다.)" % npc.activity.label.trim_suffix("하기")
-		if gs.can_greet_from_notebook(id):
-			opts.append({"id": "greet", "label": "공책에 적힌 대로 인사하기"})
-		opts.append({"id": "close", "label": "그럼 또 봬요"})
-		var speaker: String = "%s · 나를 '%s'" % [npc.name, res.title] if res.title != "…" else npc.name
-		dialogue.open(speaker, res.line, opts, res.hint)
-	elif id == "furball":
-		dialogue.open("털뭉치", gs.pet_furball(), [{"id": "close", "label": "알았어"}])
-	elif id == "hearth":
-		var done: bool = gs.happiness.times_done("cook") > 0
-		dialogue.open("화덕", "오늘은 이미 수프를 끓였다." if done else "빛버섯이 조금 남아 있다.",
-			[{"id": "cook", "label": Content.OBJECTS.hearth.label, "primary": true}, {"id": "close", "label": "그만두기"}])
-	elif id == "home":
-		dialogue.open("내 집", "창문이 나무 쪽으로 나 있다.",
-			[{"id": "sleep", "label": Content.OBJECTS.home.label, "primary": true}, {"id": "close", "label": "아직 아니야"}])
+	_show(GameState.interaction(id))
+
+
+func _show(r: Dictionary) -> void:
+	if r.has("toast"):
+		_toast(r.toast)
+		dialogue.hide()
+	elif r.has("text"):
+		dialogue.open(r.get("speaker", ""), r.text, r.get("options", []), r.get("hint", ""))
+	else:
+		dialogue.hide()
 
 
 func _on_dialogue_choice(option: String) -> void:
-	var gs := GameState
-	var id := _talking_to
-	match option:
+	var r: Dictionary = GameState.choose(_talking_to, option)
+	match r.get("action", ""):
 		"close":
 			dialogue.hide()
-		"activity":
-			gs.do_activity(id)
-			var a: Dictionary = Content.NPCS[id].activity
-			dialogue.open(Content.NPCS[id].name, a.log, [{"id": "close", "label": "좋았다"}])
-		"greet":
-			var s: int = gs.greet_from_notebook(id)
-			dialogue.open("%s · 나를 '%s'" % [Content.NPCS[id].name, Content.npc_title(id, s)],
-				"공책에 적힌 대로 인사했다. 잠깐 놀란 얼굴이더니, 금세 웃었다.", [{"id": "close", "label": "다행이다"}])
-		"cook":
-			gs.cook()
-			dialogue.open("화덕", Content.OBJECTS.hearth.log, [{"id": "close", "label": "맛없다면서…"}])
 		"sleep":
-			dialogue.hide()
 			_start_sleep()
+		"fish":
+			dialogue.hide()
+			fishing.start()
+		_:
+			_show(r)
 
 
 func _start_sleep() -> void:
 	dialogue.hide()
 	notebook.hide()
+	fishing.hide()
 	village.cancel_walk()
 	sleep_panel.open()
 
@@ -235,53 +220,110 @@ func _on_sleep_finished(choice: String) -> void:
 	morning.open("forget" if r.learned_rule else "")
 
 
+func _on_morning_done() -> void:
+	if GameState.just_forgot:
+		notebook.open(true)
+	else:
+		_toast(GameState.clock.segment_name())
+
+
 func _toast(text: String) -> void:
 	toast.text = text
-	var t := create_tween()
-	t.tween_property(toast, "modulate:a", 1.0, 0.25)
-	t.tween_interval(2.2)
-	t.tween_property(toast, "modulate:a", 0.0, 0.6)
+	if _toast_tween:
+		_toast_tween.kill()
+	_toast_tween = create_tween()
+	_toast_tween.tween_property(toast, "modulate:a", 1.0, 0.25)
+	_toast_tween.tween_interval(2.4)
+	_toast_tween.tween_property(toast, "modulate:a", 0.0, 0.6)
 
 
 # ── 개발용 ────────────────────────────────────────
 
+var _smoke_failed := false
+
+
 func _check(cond: bool, msg: String) -> void:
-	if not cond:
+	if not cond and not _smoke_failed:
+		_smoke_failed = true
 		printerr("SMOKE FAIL: " + msg)
-		get_tree().quit(1)
+
+
+## 플레이어처럼 하루를 보낸다: 채집, 등불, 이웃, 부탁
+func _play_day(fish_success: bool) -> void:
+	var gs := GameState
+	for n in gs.world.nodes.duplicate():
+		_interact(n.id)
+	_interact("tree")
+	while gs.world.drops_left() > 0:
+		_on_dialogue_choice("drop")
+	_on_dialogue_choice("close")
+	for i in WorldState.POSTS:
+		_interact("post_%d" % i)
+	for id in ["halmeoni", "gussi", "moru", "furball"]:
+		_interact(id)
+		_check(dialogue.visible, "dialogue opens for " + id)
+		var ids: Array = gs.npc_options(id).map(func(o): return o.id) if gs.NPC_IDS.has(id) else []
+		for opt in ["help", "sit", "give", "rod"]:
+			if ids.has(opt):
+				_on_dialogue_choice(opt)
+		_on_dialogue_choice("close")
+	_interact("field")
+	_on_dialogue_choice("harvest" if gs.world.pumpkin_ready() else "water")
+	_on_dialogue_choice("close")
+	_interact("hearth")
+	_on_dialogue_choice("cook")
+	_on_dialogue_choice("close")
+	if gs.world.can_fish():
+		_interact("pond")
+		_on_dialogue_choice("fish")
+		_check(fishing.visible, "fishing opens")
+		fishing._state = "bite"
+		fishing._finish(fish_success, "missed")
+		fishing.hide()
+	gs.clock.skip_to_evening()
+	if gs.npc_options("moru").any(func(o): return o.id == "party"):
+		_interact("moru")
+		_on_dialogue_choice("party")
+		_on_dialogue_choice("close")
+
+
+func _sleep_now() -> Dictionary:
+	_start_sleep()
+	_check(sleep_panel.visible, "sleep panel")
+	var before: int = GameState.cycle
+	sleep_panel._finish("sleep")
+	morning.hide()
+	_on_morning_done()
+	notebook.hide()
+	return {"forgot": GameState.cycle != before}
 
 
 func _run_smoke() -> void:
 	await get_tree().process_frame
 	_check(morning.visible, "morning overlay on start")
 	morning.hide()
-	for i in 30:
+	for i in 20:
 		village.move_input = Vector2(1, 0)
 		await get_tree().process_frame
-	for id in ["halmeoni", "moru", "gussi", "furball", "hearth"]:
-		_interact(id)
-		_check(dialogue.visible, "dialogue opens for " + id)
-		if id == "hearth":
-			_on_dialogue_choice("cook")
-		_on_dialogue_choice("close")
-	for id in ["halmeoni", "moru", "gussi"]:
-		_interact(id)
-		_on_dialogue_choice("close")
-	GameState.clock.skip_to_evening()
+	var first_forget_day := -1
+	for d in range(1, 8):
+		_play_day(false)
+		var day_was: int = GameState.day
+		notebook.open()
+		await get_tree().process_frame
+		notebook.hide()
+		var r := _sleep_now()
+		if r.forgot:
+			first_forget_day = day_was
+			break
+		await get_tree().process_frame
+	print("first forgetting on day %d" % first_forget_day)
+	_check(first_forget_day >= 3, "the first very good day should take a few days of work (was %d)" % first_forget_day)
+	_check(GameState.world.house_complete(), "the house stays after forgetting")
 	_interact("moru")
-	_on_dialogue_choice("activity")
-	_on_dialogue_choice("close")
-	_check(GameState.happiness.is_full(), "party day is a very good day")
-	notebook.open()
-	await get_tree().process_frame
-	notebook.hide()
-	_start_sleep()
-	_check(sleep_panel.visible, "sleep panel")
-	sleep_panel._finish("sleep")
-	_check(GameState.cycle == 2, "forgot after the party")
-	_check(morning.visible, "morning after forgetting")
-	print("SMOKE OK")
-	get_tree().quit(0)
+	_check(dialogue.visible, "talk after forgetting")
+	print("SMOKE FAIL" if _smoke_failed else "SMOKE OK")
+	get_tree().quit(1 if _smoke_failed else 0)
 
 
 func _take_shot(scene: String, out: String) -> void:
@@ -290,31 +332,44 @@ func _take_shot(scene: String, out: String) -> void:
 	morning.hide()
 	var gs := GameState
 	match scene:
-		"village", "dialogue", "notebook":
-			for id in ["halmeoni", "moru", "gussi"]:
-				gs.talk(id)
-				gs.talk(id)
-			gs.cook()
-			gs.clock.elapsed = gs.clock.segment_seconds * 1.4
-			village.player_pos = Vector2(120, 210)
+		"village", "dialogue", "notebook", "fishing":
+			_play_day(false)
+			gs.end_day("sleep")
+			for n in gs.world.nodes.slice(0, 2):
+				gs.world.take_node(n.id)
+			for i in 3:
+				gs.world.items.drop += 1
+				gs.world.light_post(i)
+			gs.clock.elapsed = gs.clock.segment_seconds * 1.3
+			village.player_pos = Vector2(110, 160)
+			dialogue.hide()
 			if scene == "dialogue":
-				gs.clock.skip_to_evening()
+				gs.world.items.wood = 2
 				_interact("moru")
 			elif scene == "notebook":
 				notebook.open()
+			elif scene == "fishing":
+				gs.world.rod_borrowed = true
+				fishing.start()
+				fishing._t = fishing._bite_at + 0.1
 		"sleep":
-			_make_good_day_twice()
+			gs.notebook.learn_rule("forget")
+			gs.gain("party")
+			gs.gain("talk_moru", 40.0)
 			_start_sleep()
 			sleep_panel._show_decision()
 		"morning":
-			for id in ["halmeoni", "moru", "gussi"]:
-				gs.talk(id)
-				gs.talk(id)
-			gs.clock.skip_to_evening()
-			gs.do_activity("moru")
-			gs.cook()
-			var r: Dictionary = gs.end_day("sleep")
-			morning.open("forget" if r.learned_rule else "")
+			_play_day(false)
+			gs.end_day("sleep")
+			morning.open()
+		"forgot":
+			for d in 6:
+				_play_day(false)
+				if gs.happiness.is_full():
+					break
+				gs.end_day("sleep")
+			gs.end_day("sleep")
+			notebook.open(true)
 	for i in 40:
 		await get_tree().process_frame
 	camera.reset_smoothing()
@@ -323,16 +378,3 @@ func _take_shot(scene: String, out: String) -> void:
 	img.save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)
-
-
-func _make_good_day_twice() -> void:
-	var gs := GameState
-	for n in 2:
-		for id in ["halmeoni", "moru", "gussi"]:
-			gs.talk(id)
-			gs.talk(id)
-		gs.cook()
-		gs.clock.skip_to_evening()
-		gs.do_activity("moru")
-		if n == 0:
-			gs.end_day("sleep")

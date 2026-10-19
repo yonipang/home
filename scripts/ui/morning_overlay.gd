@@ -50,13 +50,19 @@ func _ready() -> void:
 func open(learned_rule := "") -> void:
 	var gs := GameState
 	_day.text = UIKit.day_name(gs.day) + " 아침"
-	_line.text = "「" + gs.morning_line.replace("\n", "」\n「") + "」"
+	var said: String = gs.morning_line
+	if not gs.just_forgot:
+		said += "\n" + gs.furball_hint()
+	_line.text = "털뭉치: 「" + said.replace("\n", "」\n「") + "」"
 	if gs.just_forgot:
 		_extra.text = "털뭉치가 나를 보고 있다. 여기가 어디인지, 어제 무엇을 했는지 떠오르지 않는다.\n주머니에 몽당연필과 공책이 있다."
 	elif gs.day == 1 and gs.cycle == 1:
 		_extra.text = "커다란 나무 아래에서 눈을 떴다. 아무것도 기억나지 않는다.\n옆에서 털뭉치가 주먹밥을 먹고 있다."
 	else:
 		_extra.text = ""
+	var shrunk: float = gs.last_night.get("shrunk", 0.0)
+	if shrunk > 0.0 and not (gs.day == 1 and gs.cycle == 1):
+		_extra.text += ("\n" if _extra.text != "" else "") + "밤사이 빛의 원이 줄어들었다. 경계 쪽 어둠이 가까워졌다."
 	_rule.visible = learned_rule != ""
 	_rule_text.text = Content.RULES.get(learned_rule, "")
 	show()
