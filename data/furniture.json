@@ -1,5 +1,0 @@
-{
-  "torch": {"name":"횃불", "cost":2, "solid":false, "color":"e8b66c", "light":true},
-  "bench": {"name":"작업대", "cost":4, "solid":true, "color":"a88965", "light":false},
-  "planter": {"name":"이끼 화분", "cost":3, "solid":true, "color":"72a789", "light":false}
-}
